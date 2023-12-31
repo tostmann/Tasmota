@@ -1891,6 +1891,22 @@ void TasConsoleInput(void) {
     delay(0);
     char console_in_byte = TasConsole.read();
 
+#ifdef USE_IMPROV
+
+    TasmotaGlobal.serial_in_byte = console_in_byte;
+
+    if (Xdrv62(FUNC_SERIAL)) {
+      TasmotaGlobal.serial_in_byte_counter = 0;
+      console_buffer = "";
+      console_buffer_overrun = false;
+      return;
+    } 
+
+    if (isprint(TasmotaGlobal.serial_in_byte) && (TasmotaGlobal.serial_in_byte_counter < INPUT_BUFFER_SIZE -1)) 
+      TasmotaGlobal.serial_in_buffer[TasmotaGlobal.serial_in_byte_counter++] = TasmotaGlobal.serial_in_byte;
+
+#endif // USE_IMPROV
+
     if (isprint(console_in_byte)) {                       // Any char between 32 and 127
       if (console_buffer.length() < INPUT_BUFFER_SIZE) {  // Add char to string if it still fits
         console_buffer += console_in_byte;
@@ -1908,6 +1924,9 @@ void TasConsoleInput(void) {
       }
       console_buffer = "";
       console_buffer_overrun = false;
+#ifdef USE_IMPROV
+      TasmotaGlobal.serial_in_byte_counter = 0;
+#endif // USE_IMPROV
       TasConsole.flush();
       return;
     }
