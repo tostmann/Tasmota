@@ -220,6 +220,7 @@ void GVMonitorTask(void) {
     }
 #endif  // ESP8266
 
+#ifdef USE_ADC
     else if (AdcPin(pin)) {
       // Read Analog (ADC) GPIO
       pintype = GV_AnalogPin;
@@ -235,6 +236,8 @@ void GVMonitorTask(void) {
       originalValue = AdcRead1(pin);
       currentState = changeUIntScale(originalValue, 0, AdcRange(), 0, 255);   // Bring back to 0..255
     }
+#endif  // USE_ADC
+
     else {
       // Read digital GPIO
       pintype = GV_DigitalPin;
@@ -348,7 +351,7 @@ void CmndGvSampling(void) {
  * GUI
 \*********************************************************************************************/
 #ifdef USE_WEBSERVER
-#define WEB_HANDLE_GV "gv1"
+#define WEB_HANDLE_GV "gv"
 
 const char HTTP_BTN_MENU_GV[] PROGMEM =
   "<p><form action='" WEB_HANDLE_GV "' method='get' target='_blank'><button>" D_GPIO_VIEWER "</button></form></p>";
@@ -389,7 +392,7 @@ bool Xdrv121(uint32_t function) {
       }
       break;
     case FUNC_WEB_ADD_HANDLER:
-      Webserver->on(PSTR("/" WEB_HANDLE_GV), GVSetupAndStart);
+      WebServer_on(PSTR("/" WEB_HANDLE_GV), GVSetupAndStart);
       break;
 #endif // USE_WEBSERVER
   }
@@ -402,6 +405,9 @@ bool Xdrv121(uint32_t function) {
         if (GV.sse_ready && (100 == GV.sampling)) {
           GVMonitorTask();
         }
+        break;
+      case FUNC_SAVE_BEFORE_RESTART:
+        GVCloseEvent();                        // Stop current updates
         break;
       case FUNC_ACTIVE:
         result = true;
