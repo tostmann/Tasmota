@@ -103,7 +103,9 @@
 #include "include/tasmota_types.h"
 
 #ifdef CONFIG_IDF_TARGET_ESP32
+#include "driver/gpio.h"
 #include "soc/efuse_reg.h"
+#include "bootloader_common.h"
 #endif
 
 /*********************************************************************************************\
@@ -292,11 +294,6 @@ HardwareSerial TasConsole = Serial;         // Only serial interface
 
 char EmptyStr[1] = { 0 };                   // Provide a pointer destination to an empty char string
 
-typedef struct {
-  uint32_t time;
-  String   command;
-} tTimedCmnd;
-
 struct TasmotaGlobal_t {
   uint32_t global_update;                   // Timestamp of last global temperature and humidity update
   uint32_t baudrate;                        // Current Serial baudrate
@@ -411,8 +408,6 @@ struct TasmotaGlobal_t {
   uint8_t pwm_dimmer_led_bri;               // Adjusted brightness LED level
 #endif  // USE_PWM_DIMMER
 
-  tTimedCmnd timed_cmnd[MAX_TIMED_CMND];    // Timed command buffer
-
 #ifdef MQTT_DATA_STRING
   String mqtt_data;                         // Buffer filled by Response functions
 #else
@@ -439,9 +434,8 @@ struct TasmotaGlobal_t {
 
 TSettings* Settings = nullptr;
 
-#include <LinkedList.h>
-LinkedList<String> backlog;                 // Command backlog implemented with LinkedList
-#define BACKLOG_EMPTY (backlog.size() == 0)
+LList<char*> backlog;                       // Command backlog implemented with TasmotaLList
+#define BACKLOG_EMPTY (backlog.isEmpty())
 
 /*********************************************************************************************\
  * Main
@@ -450,22 +444,26 @@ LinkedList<String> backlog;                 // Command backlog implemented with 
 void setup(void) {
 #ifdef ESP32
 #ifdef CONFIG_IDF_TARGET_ESP32
+
 #ifdef DISABLE_ESP32_BROWNOUT
   DisableBrownout();      // Workaround possible weak LDO resulting in brownout detection during Wifi connection
 #endif  // DISABLE_ESP32_BROWNOUT
 
   // restore GPIO16/17 if no PSRAM is found
-  #if ESP_IDF_VERSION_MAJOR < 5       // TODO for esp-idf 5
   if (!FoundPSRAM()) {
     // test if the CPU is not pico
+#if (ESP_IDF_VERSION_MAJOR >= 5)
+    uint32_t pkg_version = bootloader_common_get_chip_ver_pkg();
+    if (pkg_version <= 3) {   // D0WD, S0WD, D2WD
+#else // ESP_IDF_VERSION_MAJOR >= 5
     uint32_t chip_ver = REG_GET_FIELD(EFUSE_BLK0_RDATA3_REG, EFUSE_RD_CHIP_VER_PKG);
     uint32_t pkg_version = chip_ver & 0x7;
     if (pkg_version <= 3) {   // D0WD, S0WD, D2WD
+#endif // ESP_IDF_VERSION_MAJOR >= 5
       gpio_reset_pin(GPIO_NUM_16);
       gpio_reset_pin(GPIO_NUM_17);
     }
   }
-  #endif
 #endif  // CONFIG_IDF_TARGET_ESP32
 #endif  // ESP32
 
@@ -782,19 +780,42 @@ void BacklogLoop(void) {
     if (!BACKLOG_EMPTY && !TasmotaGlobal.backlog_mutex) {
       TasmotaGlobal.backlog_mutex = true;
       bool nodelay = false;
-      bool nodelay_detected = false;
-      String cmd;
       do {
-        cmd = backlog.shift();
-        nodelay_detected = !strncasecmp_P(cmd.c_str(), PSTR(D_CMND_NODELAY), strlen(D_CMND_NODELAY));
-        if (nodelay_detected) { nodelay = true; }
-      } while (!BACKLOG_EMPTY && nodelay_detected);
-      if (!nodelay_detected) {
-        ExecuteCommand((char*)cmd.c_str(), SRC_BACKLOG);
+        char* cmd = *backlog.head();
+        backlog.removeHead();
+/*
+        // This adds 32 bytes
+        char* cmd = *backlog.removeHead();
+*/
+        if (!strncasecmp_P(cmd, PSTR(D_CMND_NODELAY), strlen(D_CMND_NODELAY))) {
+          free(cmd);
+          nodelay = true;
+        } else {
+          ExecuteCommand(cmd, SRC_BACKLOG);
+          free(cmd);
+          if (nodelay || TasmotaGlobal.backlog_nodelay) {
+            TasmotaGlobal.backlog_timer = millis();  // Reset backlog_timer which has been set by ExecuteCommand (CommandHandler)
+          }
+          break;
+        }
+      } while (!BACKLOG_EMPTY);
+/*
+      // This adds 96 bytes
+      for (auto &cmd : backlog) {
+        backlog.remove(&cmd);
+        if (!strncasecmp_P(cmd, PSTR(D_CMND_NODELAY), strlen(D_CMND_NODELAY))) {
+          free(cmd);
+          nodelay = true;
+        } else {
+          ExecuteCommand(cmd, SRC_BACKLOG);
+          free(cmd);
+          if (nodelay || TasmotaGlobal.backlog_nodelay) {
+            TasmotaGlobal.backlog_timer = millis();  // Reset backlog_timer which has been set by ExecuteCommand (CommandHandler)
+          }
+          break;
+        }
       }
-      if (nodelay || TasmotaGlobal.backlog_nodelay) {
-        TasmotaGlobal.backlog_timer = millis();  // Reset backlog_timer which has been set by ExecuteCommand (CommandHandler)
-      }
+*/
       TasmotaGlobal.backlog_mutex = false;
     }
     if (BACKLOG_EMPTY) {
