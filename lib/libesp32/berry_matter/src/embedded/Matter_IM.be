@@ -772,9 +772,10 @@ class Matter_IM
     attr_name = attr_name ? " (" + attr_name + ")" : ""
 
     if res != nil
-      var res_str = res.to_str_val()  # get the value with anonymous tag before it is tagged, for logging
       if tasmota.loglevel(3)
+        var res_str = res.to_str_val()  # get the value with anonymous tag before it is tagged, for logging
         tasmota.log(f"MTR: >Read_Attr1({msg.session.local_session_id:6i}) {ctx}{attr_name} - {res_str}", 3)
+        # tasmota.log(f"MTR: {res.tlv2raw().tohex()}", 3)
       end
       # if matter.profiler.active && tasmota.loglevel(3)
       #   tasmota.log(f"MTR:            {raw=}", 3)    # TODO remove before flight
@@ -827,7 +828,7 @@ class Matter_IM
       tasmota.log(f"MTR: >Subscribe (%6i) event_requests_size={size(query.event_requests)}", 3)
     end
 
-    var ret = self._inner_process_read_request(msg.session, query, msg, true #-no_log-#)
+    var ret = self._inner_process_read_request(msg.session, query, msg, false #-no_log-#)
     # ret is of type `Matter_ReportDataMessage`
     ret.subscription_id = sub.subscription_id     # enrich with subscription id TODO
     self.send_subscribe_response(msg, ret, sub)

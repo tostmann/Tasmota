@@ -718,7 +718,8 @@ bool HttpCheckPriviledgedAccess(bool autorequestauth = true)
       if ((referer.indexOf(hostname) == 7) || (referer.indexOf(WiFi.localIP().toString()) == 7)) {
         return true;
       }
-#if defined(ESP32) && CONFIG_IDF_TARGET_ESP32 && defined(USE_ETHERNET)
+//#if defined(ESP32) && CONFIG_IDF_TARGET_ESP32 && defined(USE_ETHERNET)
+#if defined(ESP32) && defined(USE_ETHERNET)
       hostname = EthernetHostname();
       hostname.toUpperCase();
       // TODO rework if IPv6
@@ -934,7 +935,8 @@ void WSContentSendStyle_P(const char* formatP, ...) {
         (lip && sip) ? ", " : "",
         (sip) ? WiFi.softAPIP().toString().c_str() : "");
     }
-#if defined(ESP32) && CONFIG_IDF_TARGET_ESP32 && defined(USE_ETHERNET)
+//#if defined(ESP32) && CONFIG_IDF_TARGET_ESP32 && defined(USE_ETHERNET)
+#if defined(ESP32) && defined(USE_ETHERNET)
     eip = EthernetHasIP();
     if (eip) {
       WSContentSend_P(PSTR("%s%s%s (%s)"),          // tasmota-eth.local (192.168.2.13)
@@ -1025,6 +1027,10 @@ void WSContentSend_THD(const char *types, float f_temperature, float f_humidity)
   WSContentSend_PD(HTTP_SNS_HUM, types, parameter);
   dtostrfd(CalcTempHumToDew(f_temperature, f_humidity), Settings->flag2.temperature_resolution, parameter);
   WSContentSend_PD(HTTP_SNS_DEW, types, parameter, TempUnit());
+#ifdef USE_HEAT_INDEX
+  dtostrfd(CalcTemHumToHeatIndex(f_temperature, f_humidity), Settings->flag2.temperature_resolution, parameter);
+  WSContentSend_PD(HTTP_SNS_HEATINDEX, types, parameter, TempUnit());
+#endif  // USE_HEAT_INDEX
 }
 
 void WSContentEnd(void) {
@@ -2469,7 +2475,8 @@ void HandleInformation(void) {
     WSContentSend_P(PSTR("}1" D_DNS_SERVER "2}2%_I"), Settings->ipv4_address[4]);
 #endif // USE_IPV6
   }
-#if defined(ESP32) && CONFIG_IDF_TARGET_ESP32 && defined(USE_ETHERNET)
+//#if defined(ESP32) && CONFIG_IDF_TARGET_ESP32 && defined(USE_ETHERNET)
+#if defined(ESP32) && defined(USE_ETHERNET)
   if (EthernetHasIP()) {
     if (show_hr) {
       WSContentSeparatorIThin();

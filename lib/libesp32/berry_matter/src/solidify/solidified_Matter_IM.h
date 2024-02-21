@@ -3140,13 +3140,13 @@ be_local_closure(Matter_IM_process_read_request_solo,   /* name */
       0x4C280000,  //  00B3  LDNIL	R10
       0x2028080A,  //  00B4  NE	R10	R4	R10
       0x782A0013,  //  00B5  JMPF	R10	#00CA
-      0x8C280933,  //  00B6  GETMET	R10	R4	K51
-      0x7C280200,  //  00B7  CALL	R10	1
-      0xB82E2400,  //  00B8  GETNGBL	R11	K18
-      0x8C2C1726,  //  00B9  GETMET	R11	R11	K38
-      0x58340014,  //  00BA  LDCONST	R13	K20
-      0x7C2C0400,  //  00BB  CALL	R11	2
-      0x782E000B,  //  00BC  JMPF	R11	#00C9
+      0xB82A2400,  //  00B6  GETNGBL	R10	K18
+      0x8C281526,  //  00B7  GETMET	R10	R10	K38
+      0x58300014,  //  00B8  LDCONST	R12	K20
+      0x7C280400,  //  00B9  CALL	R10	2
+      0x782A000D,  //  00BA  JMPF	R10	#00C9
+      0x8C280933,  //  00BB  GETMET	R10	R4	K51
+      0x7C280200,  //  00BC  CALL	R10	1
       0xB82E2400,  //  00BD  GETNGBL	R11	K18
       0x8C2C170B,  //  00BE  GETMET	R11	R11	K11
       0x60340018,  //  00BF  GETGBL	R13	G24
@@ -3539,7 +3539,7 @@ be_local_closure(Matter_IM_subscribe_request,   /* name */
       0x88240306,  //  0055  GETMBR	R9	R1	K6
       0x5C280600,  //  0056  MOVE	R10	R3
       0x5C2C0200,  //  0057  MOVE	R11	R1
-      0x50300200,  //  0058  LDBOOL	R12	1	0
+      0x50300000,  //  0058  LDBOOL	R12	0	0
       0x7C1C0A00,  //  0059  CALL	R7	5
       0x8820091A,  //  005A  GETMBR	R8	R4	K26
       0x901E3408,  //  005B  SETMBR	R7	K26	R8
