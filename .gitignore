@@ -1,6 +1,7 @@
 ## OS specific ########
 .DS_Store
 .fuse_hidden*
+*~
 
 ## Compilation artefacts ########
 *.pyc
