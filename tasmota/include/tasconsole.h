@@ -15,6 +15,7 @@ class TASCONSOLE {
     virtual int available() = 0;
     virtual void begin(uint32_t) = 0;
     virtual void flush() = 0;
+    virtual size_t write(uint8_t);
     virtual size_t println() = 0;
     virtual size_t print(char *) = 0;
     virtual size_t printf(const char*, char *, const char*&, const char*&, const char*&) = 0;
@@ -40,6 +41,10 @@ public:
 
   void flush() {
     object->flush(); 
+  }
+
+  size_t write(uint8_t c) {
+      return object->write(c); 
   }
 
   size_t println() {
@@ -85,6 +90,10 @@ public:
 		  object.flush();
     }
 
+    size_t write(uint8_t c) override {
+	return object.write(c); 
+    }
+     
      size_t println() override {
       return object.println();
     }

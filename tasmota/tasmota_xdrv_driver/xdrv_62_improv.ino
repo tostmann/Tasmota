@@ -78,10 +78,10 @@ void ImprovWriteData(uint8_t* data, uint32_t size) {
 
   AddLog(LOG_LEVEL_DEBUG_MORE, PSTR("IMP: Send '%*_H'"), size, data);
 
-  for (uint32_t i = 0; i < size; i++) {
-      if (tasconsole_serial) Serial.write(data[i]); else TasConsole.write(data[i]);
-   }
-  if (tasconsole_serial) Serial.write('\n'); else TasConsole.write('\n');
+  for (uint32_t i = 0; i < size; i++)
+      TasConsole.write(data[i]);
+    
+  TasConsole.write('\n');
 }
 
 void ImprovSendCmndState(uint32_t command, uint32_t state) {
