@@ -56,3 +56,26 @@ import global
 def f() return id(global.l[0] := 42) end
 assert(f() == 42)
 # bug: returns [42, 11]
+
+# bug when using member for self
+class confused_walrus
+    var b
+    def f()
+        var c = 1
+        if self.b := true
+            c = 2
+        end
+        return self
+    end
+end
+var ins = confused_walrus()
+assert(ins.f() == ins)
+
+# Check overwriting a builtin (https://github.com/berry-lang/berry/issues/416)
+
+def check_overwrite_builtin()
+    print := 1
+    assert(print == 1)
+end
+
+check_overwrite_builtin()
