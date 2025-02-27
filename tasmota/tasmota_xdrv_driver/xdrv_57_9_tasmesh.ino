@@ -51,11 +51,16 @@ void CB_MESHDataSent(const uint8_t *MAC, esp_now_send_status_t sendStatus) {
   AddLog(LOG_LEVEL_DEBUG, PSTR("MSH: Sent to %s status %d"), _destMAC, sendStatus);
 }
 
-void CB_MESHDataReceived(const uint8_t *MAC, const uint8_t *packet, int len) {
+//void CB_MESHDataReceived(const uint8_t *MAC, const uint8_t *packet, int len) {
+void CB_MESHDataReceived(const esp_now_recv_info_t *esp_now_info, const uint8_t *packet, int len);
+void CB_MESHDataReceived(const esp_now_recv_info_t *esp_now_info, const uint8_t *packet, int len) {
   static bool _locked = false;
   if (_locked) { return; }
 
   _locked = true;
+
+  uint8_t *MAC = esp_now_info->src_addr;
+
   char _srcMAC[18];
   ToHex_P(MAC, 6, _srcMAC, 18, ':');
   AddLog(LOG_LEVEL_DEBUG, PSTR("MSH: Rcvd from %s"), _srcMAC);
@@ -417,6 +422,7 @@ void MESHstartNode(int32_t _channel, uint8_t _role){ //we need a running broker 
 void MESHstartBroker(void) {       // Must be called after WiFi is initialized!! Rule - on system#boot do meshbroker endon
 #ifdef ESP32
   WiFi.mode(WIFI_AP_STA);
+  WiFi.AP.begin();
   AddLog(LOG_LEVEL_INFO, PSTR("MSH: Broker MAC %s"), WiFi.softAPmacAddress().c_str());
   WiFi.softAPmacAddress(MESH.broker); //set MESH.broker to the needed MAC
   uint32_t _channel = WiFi.channel();
@@ -562,8 +568,10 @@ void MESHevery50MSecond(void) {
 //          AddLog(LOG_LEVEL_INFO, PSTR("MSH: %*_H), MESH.packetToConsume.front().chunkSize, (uint8_t *)&MESH.packetToConsume.front().payload);
         }
         break;
+#ifdef USE_TASMESH_HEARTBEAT
       case PACKET_TYPE_HEARTBEAT:
         break;
+#endif  // USE_TASMESH_HEARTBEAT
 
       default:
         AddLogBuffer(LOG_LEVEL_DEBUG, (uint8_t *)&MESH.packetToConsume.front(), MESH.packetToConsume.front().chunkSize +5);

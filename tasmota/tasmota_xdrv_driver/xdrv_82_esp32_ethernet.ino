@@ -18,7 +18,8 @@
 */
 
 #ifdef ESP32
-//#if CONFIG_IDF_TARGET_ESP32
+#include "sdkconfig.h"
+#ifdef CONFIG_ETH_ENABLED
 #ifdef USE_ETHERNET
 /*********************************************************************************************\
  * Ethernet support for ESP32
@@ -78,7 +79,7 @@
 #endif
 
 #ifndef ETH_TYPE
-#define ETH_TYPE          0                      // 0 = LAN8720, 1 = TLK110/IP101, 2 = RTL8201, 3 = DP83848, 4 = RFU, 5 = KSZ8081, 6 = KSZ8041, 7 = JL1101, 8 = W5500, 9 = KSZ8851, 10 = DM9051
+#define ETH_TYPE          0                      // 0 = LAN8720, 1 = TLK110/IP101, 2 = RTL8201, 3 = DP83848, 4 = DM9051, 5 = KSZ8081, 6 = KSZ8041, 7 = JL1101, 8 = W5500, 9 = KSZ8851
 #endif
 
 #ifndef ETH_CLKMODE
@@ -88,18 +89,52 @@
 
 #include <ETH.h>
 
+#define ETH_USES_SPI    0x80                    // Use the highest significant bit to mark SPI Ethernet
+
 const uint8_t eth_type_xtable[] = {
-  0,     //  0 = LAN8720
-  1,     //  1 = TLK110/IP101
-  2,     //  2 = RTL8201
-  4,     //  3 = DP83848 (is 4 in core3)
-  0,     //  4 = RFU - Reserved for Future Use
-  6,     //  5 = KSZ8081 (is 6 in core3)
-  5,     //  6 = KSZ8041 (is 5 in core3)
-  3,     //  7 = JL1101 (is 3 in core3)
-  8,     //  8 = W5500 (is new in core3 and using SPI)
-  9,     //  9 = KSZ8851 (is new in core3 and using SPI)
-  7      // 10 = DM9051 (is 7 in core3 and using SPI)
+#if CONFIG_ETH_USE_ESP32_EMAC
+  ETH_PHY_LAN8720,      //  0 = LAN8720
+  ETH_PHY_TLK110,       //  1 = TLK110/IP101
+  ETH_PHY_RTL8201,      //  2 = RTL8201
+  ETH_PHY_DP83848,      //  3 = DP83848
+
+#if CONFIG_ETH_SPI_ETHERNET_DM9051
+  ETH_PHY_DM9051  | ETH_USES_SPI, //  4 = 10 = DM9051
+#else
+  0,                    //  4 = 10 = DM9051
+#endif
+
+  ETH_PHY_KSZ8081,      //  5 = KSZ8081
+  ETH_PHY_KSZ8041,      //  6 = KSZ8041
+  ETH_PHY_JL1101,       //  7 = JL1101
+#else
+  0,                    //  0 = LAN8720
+  0,                    //  1 = TLK110/IP101
+  0,                    //  2 = RTL8201
+  0,                    //  3 = DP83848
+  
+#if CONFIG_ETH_SPI_ETHERNET_DM9051
+  ETH_PHY_DM9051  | ETH_USES_SPI, //  4 = 10 = DM9051
+#else
+  0,                    //  4 = 10 = DM9051
+#endif
+
+  0,                    //  5 = KSZ8081
+  0,                    //  6 = KSZ8041
+  0,                    //  7 = JL1101
+#endif // CONFIG_ETH_USE_ESP32_EMAC
+
+#if CONFIG_ETH_SPI_ETHERNET_W5500
+  ETH_PHY_W5500   | ETH_USES_SPI,     //  8 = W5500
+#else
+  0,                    //  8 = W5500
+#endif
+
+#if CONFIG_ETH_SPI_ETHERNET_KSZ8851SNL
+  ETH_PHY_KSZ8851 | ETH_USES_SPI,     //  9 = KSZ8851
+#else
+  0,                    //  9 = KSZ8851
+#endif
 };
 char eth_hostname[sizeof(TasmotaGlobal.hostname)];
 uint8_t eth_config_change;
@@ -134,10 +169,12 @@ void EthernetEvent(arduino_event_t *event) {
       }
       TasmotaGlobal.rules_flag.eth_connected = 1;
       TasmotaGlobal.global_state.eth_down = 0;
+#ifndef FIRMWARE_MINIMAL
       AddLog(LOG_LEVEL_DEBUG, PSTR("ETH: IPv4 %_I, mask %_I, gateway %_I"),
               event->event_info.got_ip.ip_info.ip.addr,
               event->event_info.got_ip.ip_info.netmask.addr,
               event->event_info.got_ip.ip_info.gw.addr);
+#endif // FIRMWARE_MINIMAL
       WiFiHelper::scrubDNS();    // internal calls to reconnect can zero the DNS servers, save DNS for future use
       break;
 
@@ -147,9 +184,11 @@ void EthernetEvent(arduino_event_t *event) {
       ip_addr_t ip_addr6;
       ip_addr_copy_from_ip6(ip_addr6, event->event_info.got_ip6.ip6_info.ip);
       IPAddress addr(&ip_addr6);
+#ifndef FIRMWARE_MINIMAL
       AddLog(LOG_LEVEL_DEBUG, PSTR("%s: IPv6 %s %s"),
              event->event_id == ARDUINO_EVENT_ETH_GOT_IP6 ? "ETH" : "WIF",
              IPv6isLocal(addr) ? PSTR("Local") : PSTR("Global"), addr.toString().c_str());
+#endif // FIRMWARE_MINIMAL
       if (!IPv6isLocal(addr)) {    // declare network up on IPv6
         TasmotaGlobal.rules_flag.eth_connected = 1;
         TasmotaGlobal.global_state.eth_down = 0;
@@ -187,30 +226,31 @@ void EthernetSetIp(void) {
 void EthernetInit(void) {
   if (!Settings->flag4.network_ethernet) { return; }
 
-  int eth_type = eth_type_xtable[Settings->eth_type];
+  int32_t eth_type = (Settings->eth_type < sizeof(eth_type_xtable)) ? eth_type_xtable[Settings->eth_type] : 0;    // make sure we don't overflow
+  bool eth_uses_spi = (eth_type & ETH_USES_SPI);
+  eth_type = eth_type & 0x7F;     // remove SPI flag
 #if CONFIG_ETH_USE_ESP32_EMAC
   if (WT32_ETH01 == TasmotaGlobal.module_type) {
     Settings->eth_address = 1;                    // EthAddress
-    Settings->eth_type = 0;                       // EthType 0 = LAN8720
+    Settings->eth_type = ETH_PHY_LAN8720;         // EthType 0 = LAN8720
     Settings->eth_clk_mode = 0;                   // EthClockMode 0 = ETH_CLOCK_GPIO0_IN
   }
-#else  // No CONFIG_ETH_USE_ESP32_EMAC
-  if (Settings->eth_type < 7) {
-    Settings->eth_type = 8;                       // Select W5500 (SPI) for non-EMAC hardware
-  }
-  eth_type = eth_type_xtable[Settings->eth_type] -7;  // As No EMAC support substract EMAC enums (According ETH.cpp debug info)
 #endif  // CONFIG_ETH_USE_ESP32_EMAC
 
-  if (Settings->eth_type < 7) {
-    // CONFIG_ETH_USE_ESP32_EMAC
-    if (!PinUsed(GPIO_ETH_PHY_MDC) && !PinUsed(GPIO_ETH_PHY_MDIO)) {  // && should be || but keep for backward compatibility
-      AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_ETH "No ETH MDC and ETH MDIO GPIO defined"));
+  if (eth_uses_spi) {
+    // Uses SPI Ethernet and needs at least SPI CS being ETH MDC
+    if (!PinUsed(GPIO_ETH_PHY_MDC)) {
+#ifndef FIRMWARE_MINIMAL
+      AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_ETH "No ETH MDC as SPI CS GPIO defined"));
+#endif // FIRMWARE_MINIMAL
       return;
     }
   } else {
-    // ETH_SPI_SUPPORTS_CUSTOM
-    if (!PinUsed(GPIO_ETH_PHY_MDC) || !PinUsed(GPIO_ETH_PHY_MDIO) || !PinUsed(GPIO_ETH_PHY_POWER)) {
-      AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_ETH "No ETH MDC (SPI CS), ETH MDIO (SPI IRQ) and ETH POWER (SPI RST) GPIO defined"));
+    // Native ESP32
+    if (!PinUsed(GPIO_ETH_PHY_MDC) && !PinUsed(GPIO_ETH_PHY_MDIO)) {  // && should be || but keep for backward compatibility
+#ifndef FIRMWARE_MINIMAL
+      AddLog(LOG_LEVEL_DEBUG_MORE, PSTR(D_LOG_ETH "No ETH MDC and ETH MDIO GPIO defined"));
+#endif // FIRMWARE_MINIMAL
       return;
     }
   }
@@ -231,7 +271,7 @@ void EthernetInit(void) {
 #endif // USE_IPV6
 
   bool init_ok = false;
-  if (Settings->eth_type < 7) {
+  if (!eth_uses_spi) {
 #if CONFIG_ETH_USE_ESP32_EMAC
     init_ok = (ETH.begin((eth_phy_type_t)eth_type, Settings->eth_address, eth_mdc, eth_mdio, eth_power, (eth_clock_mode_t)Settings->eth_clk_mode));
 #endif  // CONFIG_ETH_USE_ESP32_EMAC
@@ -414,5 +454,5 @@ bool Xdrv82(uint32_t function) {
 }
 
 #endif  // USE_ETHERNET
-//#endif  // CONFIG_IDF_TARGET_ESP32
+#endif  // CONFIG_IDF_TARGET_ESP32C2
 #endif  // ESP32

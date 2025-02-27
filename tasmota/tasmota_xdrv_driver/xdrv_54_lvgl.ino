@@ -22,6 +22,7 @@
 
 #include <renderer.h>
 #include "lvgl.h"
+#include "core/lv_global.h"         // needed for LV_GLOBAL_DEFAULT
 #include "tasmota_lvgl_assets.h"    // force compilation of assets
 
 #define XDRV_54             54
@@ -30,14 +31,17 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 
+// callback type when a screen paint is done
+typedef void (*lv_paint_cb_t)(int32_t x1, int32_t y1, int32_t x2, int32_t y2, uint8_t *pixels);
+
 struct LVGL_Glue {
   lv_display_t *lv_display = nullptr;
   lv_indev_t *lv_indev = nullptr;
-  lv_color_t *lv_pixel_buf = nullptr;
-  lv_color_t *lv_pixel_buf2 = nullptr;
+  void *lv_pixel_buf = nullptr;
+  void *lv_pixel_buf2 = nullptr;
   Ticker tick;
   File * screenshot = nullptr;
-  bool first_frame = true;  // Tracks if a call to `lv_flush_callback` needs to wait for DMA transfer to complete
+  lv_paint_cb_t paint_cb = nullptr;
 };
 LVGL_Glue * lvgl_glue;
 
@@ -69,11 +73,8 @@ void lv_flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *color
   if (lvgl_glue->screenshot != nullptr) {
     // save pixels to file
     int32_t btw = (width * height * LV_COLOR_DEPTH + 7) / 8;
+    yield();            // ensure WDT does not fire
     while (btw > 0) {
-#if (LV_COLOR_DEPTH == 16) && (LV_COLOR_16_SWAP == 1)
-      uint16_t * pix = (uint16_t*) color_p;
-      for (uint32_t i = 0; i < btw / 2; i++) (pix[i] = pix[i] << 8 | pix[i] >> 8);
-#endif
       if (btw > 0) {    // if we had a previous error (ex disk full) don't try to write anymore
         int32_t ret = lvgl_glue->screenshot->write((const uint8_t*) color_p, btw);
         if (ret >= 0) {
@@ -87,18 +88,12 @@ void lv_flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *color
     return; // ok
   }
 
-  if (!lvgl_glue->first_frame) {
-      //renderer->dmaWait();  // Wait for prior DMA transfer to complete
-      //disrendererplay->endWrite(); // End transaction from any prior call
-  } else {
-      lvgl_glue->first_frame = false;
-  }
-
   uint32_t pixels_len = width * height;
   uint32_t chrono_start = millis();
   renderer->setAddrWindow(area->x1, area->y1, area->x1+width, area->y1+height);
   renderer->pushColors((uint16_t *)color_p, pixels_len, true);
   renderer->setAddrWindow(0,0,0,0);
+  renderer->Updateframe();
   uint32_t chrono_time = millis() - chrono_start;
 
   lv_disp_flush_ready(disp);
@@ -109,6 +104,20 @@ void lv_flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *color
               chrono_time > 0 ? pixels_len / chrono_time : -1);
     }
   }
+  // if there is a display callback, call it
+  if (lvgl_glue->paint_cb != nullptr) {
+    lvgl_glue->paint_cb(area->x1, area->y1, area->x2, area->y2, color_p);
+  }
+}
+
+void lv_set_paint_cb(void* cb);
+void lv_set_paint_cb(void* cb) {
+  lvgl_glue->paint_cb = (lv_paint_cb_t) cb;
+}
+
+void * lv_get_paint_cb(void);
+void * lv_get_paint_cb(void) {
+  return (void*) lvgl_glue->paint_cb;
 }
 
 
@@ -148,12 +157,12 @@ extern "C" {
   }
 
   // int fclose ( FILE * stream );
-  int lvbe_fclose(lvbe_FILE * stream) {
+  lv_fs_res_t lvbe_fclose(lvbe_FILE * stream) {
     File * f_ptr = (File*) stream;
     f_ptr->close();
     delete f_ptr;
     // AddLog(LOG_LEVEL_INFO, "LVG: lvbe_fclose(%p)", f_ptr);
-    return 0;
+    return LV_FS_RES_OK;
   }
 
   // size_t fread ( void * ptr, size_t size, size_t count, FILE * stream );
@@ -383,7 +392,7 @@ void start_lvgl(const char * uconfig);
 void start_lvgl(const char * uconfig) {
 
   if (lvgl_glue != nullptr) {
-    AddLog(LOG_LEVEL_DEBUG, D_LOG_LVGL "LVGL was already initialized");
+    AddLog(LOG_LEVEL_DEBUG_MORE, D_LOG_LVGL "LVGL was already initialized");
     return;
   }
 
@@ -407,16 +416,16 @@ void start_lvgl(const char * uconfig) {
   bool status_ok = true;
   size_t lvgl_buffer_size;
   do {
-    //lvgl_buffer_size = LV_HOR_RES_MAX * LV_BUFFER_ROWS;
-    uint32_t flushlines = renderer->lvgl_pars()->fluslines;
+    uint32_t flushlines = renderer->lvgl_pars()->flushlines;
     if (0 == flushlines) flushlines = LV_BUFFER_ROWS;
 
     lvgl_buffer_size = renderer->width() * flushlines;
     if (renderer->lvgl_pars()->use_dma) {
       lvgl_buffer_size /= 2;
       if (lvgl_buffer_size < 1000000) {
-        AddLog(LOG_LEVEL_ERROR, "LVG: Allocating buffer2 %i bytes in main memory (flushlines %i)", lvgl_buffer_size * sizeof(lv_color_t), flushlines);
-        lvgl_glue->lv_pixel_buf2 = new lv_color_t[lvgl_buffer_size];
+        // allocate preferably in internal memory which is faster than PSRAM
+        AddLog(LOG_LEVEL_DEBUG, "LVG: Allocating buffer2 %i bytes in main memory (flushlines %i)", (lvgl_buffer_size * (LV_COLOR_DEPTH / 8)) / 1024, flushlines);
+        lvgl_glue->lv_pixel_buf2 = heap_caps_malloc_prefer(lvgl_buffer_size * (LV_COLOR_DEPTH / 8), 2, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL, MALLOC_CAP_8BIT);
       }
       if (!lvgl_glue->lv_pixel_buf2) {
         status_ok = false;
@@ -424,8 +433,9 @@ void start_lvgl(const char * uconfig) {
       }
     }
 
-    AddLog(LOG_LEVEL_ERROR, "LVG: Allocating buffer1 %i KB in main memory (flushlines %i)", (lvgl_buffer_size * sizeof(lv_color_t)) / 1024, flushlines);
-    lvgl_glue->lv_pixel_buf = new lv_color_t[lvgl_buffer_size];
+    // allocate preferably in internal memory which is faster than PSRAM
+    AddLog(LOG_LEVEL_DEBUG, "LVG: Allocating buffer1 %i KB in main memory (flushlines %i)", (lvgl_buffer_size * (LV_COLOR_DEPTH / 8)) / 1024, flushlines);
+    lvgl_glue->lv_pixel_buf = heap_caps_malloc_prefer(lvgl_buffer_size * (LV_COLOR_DEPTH / 8), 2, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL, MALLOC_CAP_8BIT);
     if (!lvgl_glue->lv_pixel_buf) {
       status_ok = false;
       break;
@@ -434,11 +444,11 @@ void start_lvgl(const char * uconfig) {
 
   if (!status_ok) {
     if (lvgl_glue->lv_pixel_buf) {
-      delete[] lvgl_glue->lv_pixel_buf;
+      free(lvgl_glue->lv_pixel_buf);
       lvgl_glue->lv_pixel_buf = NULL;
     }
     if (lvgl_glue->lv_pixel_buf2) {
-      delete[] lvgl_glue->lv_pixel_buf2;
+      free(lvgl_glue->lv_pixel_buf2);
       lvgl_glue->lv_pixel_buf2 = NULL;
     }
     delete lvgl_glue;
@@ -449,8 +459,9 @@ void start_lvgl(const char * uconfig) {
 
   // Initialize LvGL display driver
   lvgl_glue->lv_display = lv_display_create(renderer->width(), renderer->height());
+  lv_display_set_dpi(lvgl_glue->lv_display, 160);          // set display to 160 DPI instead of default 130 DPI to avoid some rounding in styles
   lv_display_set_flush_cb(lvgl_glue->lv_display, lv_flush_callback);
-  lv_display_set_buffers(lvgl_glue->lv_display, lvgl_glue->lv_pixel_buf, lvgl_glue->lv_pixel_buf2, lvgl_buffer_size, LV_DISPLAY_RENDER_MODE_PARTIAL);
+  lv_display_set_buffers(lvgl_glue->lv_display, lvgl_glue->lv_pixel_buf, lvgl_glue->lv_pixel_buf2, lvgl_buffer_size * (LV_COLOR_DEPTH / 8), LV_DISPLAY_RENDER_MODE_PARTIAL);
 
   // Initialize LvGL input device (touchscreen already started)
   lvgl_glue->lv_indev = lv_indev_create();
@@ -472,6 +483,10 @@ void start_lvgl(const char * uconfig) {
   // lv_disp_set_bg_opa(NULL, LV_OPA_COVER);
   lv_obj_set_style_bg_color(lv_screen_active(), lv_color_hex(USE_LVGL_BG_DEFAULT), static_cast<uint32_t>(LV_PART_MAIN) | static_cast<uint32_t>(LV_STATE_DEFAULT));
   lv_obj_set_style_bg_opa(lv_screen_active(), LV_OPA_COVER, static_cast<uint32_t>(LV_PART_MAIN) | static_cast<uint32_t>(LV_STATE_DEFAULT));
+
+#ifdef USE_BERRY_LVGL_PANEL
+  berry.lvgl_panel_loaded = false;      // we can load the panel
+#endif // USE_BERRY_LVGL_PANEL
 
 #if LV_USE_LOG
   lv_log_register_print_cb(lvbe_debug);
